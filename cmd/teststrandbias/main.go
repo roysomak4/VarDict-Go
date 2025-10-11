@@ -134,7 +134,7 @@ func roundToDecimals(num float64) float64 {
 	if math.IsNaN(num) || math.IsInf(num, 0) {
 		return num
 	}
-	return math.Round(num+100000) / 100000
+	return math.Round(num*100000) / 100000
 }
 
 func formatNumber(num float64) string {
