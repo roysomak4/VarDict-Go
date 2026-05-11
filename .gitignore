@@ -28,8 +28,8 @@ go.work.sum
 .env
 
 # build output
-.build/
-build/
+*.build/*
+*build/*
 
 # Editor/IDE
 # .idea/
