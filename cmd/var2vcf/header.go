@@ -9,28 +9,18 @@ import (
 )
 
 func printVCFHeader(config Config, sampleName string, writer io.Writer) {
-	// File format
 	fmt.Fprintf(writer, "##fileformat=VCFv4.2\n")
 	fmt.Fprintf(writer, "##source=VarDict_Go_v%s\n", Version)
 
-	// Reference
 	if config.RefPath != "" {
 		fmt.Fprintf(writer, "##reference=%s\n", config.RefPath)
 	}
 
-	// Contigs from BED file
 	printContigs(config.BedPath, writer)
-
-	// INFO field definitions
 	printINFOHeaders(writer)
-
-	// FORMAT field definitions
+	printFILTERHeaders(config, writer)
 	printFORMATHeaders(writer)
 
-	// FILTER definitions
-	printFILTERHeaders(config, writer)
-
-	// Column header line
 	sampleNoSpace := strings.ReplaceAll(sampleName, " ", "_")
 	fmt.Fprintf(writer, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t%s\n", sampleNoSpace)
 }
@@ -39,31 +29,23 @@ func printContigs(bedPath string, writer io.Writer) {
 	if bedPath == "" {
 		return
 	}
-
-	file, err := os.Open(bedPath)
+	f, err := os.Open(bedPath)
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer f.Close()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Split(scanner.Text(), "\t")
 		if len(fields) >= 3 {
-			chr := fields[0]
-			end := fields[2]
-			fmt.Fprintf(writer, "##contig=<ID=%s,length=%s>\n", chr, end)
+			fmt.Fprintf(writer, "##contig=<ID=%s,length=%s>\n", fields[0], fields[2])
 		}
 	}
 }
 
 func printINFOHeaders(writer io.Writer) {
-	infoFields := []struct {
-		id          string
-		number      string
-		typ         string
-		description string
-	}{
+	fields := []struct{ id, number, typ, desc string }{
 		{"SAMPLE", "1", "String", "Sample name (with whitespace translated to underscores)"},
 		{"TYPE", "1", "String", "Variant Type: SNV Insertion Deletion Complex"},
 		{"DP", "1", "Integer", "Total Depth"},
@@ -71,84 +53,78 @@ func printINFOHeaders(writer io.Writer) {
 		{"VD", "1", "Integer", "Variant Depth"},
 		{"AF", "A", "Float", "Allele Frequency"},
 		{"BIAS", "1", "String", "Strand Bias Info"},
-		{"PMEAN", "1", "Float", "Mean position in reads"},
+		{"REFBIAS", "1", "String", "Reference depth by strand"},
+		{"VARBIAS", "1", "String", "Variant depth by strand"},
+		{"PMEAN", "1", "Float", "The mean distance to the nearest 5 or 3 prime read end (whichever is closer) in all reads that support the variant call"},
 		{"PSTD", "1", "Float", "Position STD in reads"},
-		{"QUAL", "1", "Float", "Mean base quality"},
-		{"QSTD", "1", "Float", "Base quality STD"},
-		{"SBF", "1", "String", "Strand Bias Fisher: RefFor:RefRev:AltFor:AltRev"},
-		{"ODDRATIO", "1", "Float", "Strand Bias Odds Ratio"},
-		{"MQ", "1", "Float", "Mean mapping quality"},
-		{"SN", "1", "Float", "Signal to noise ratio"},
-		{"HIAF", "1", "Float", "High quality allele frequency"},
-		{"ADJAF", "1", "Float", "Adjusted allele frequency"},
-		{"NM", "1", "Float", "Mean mismatches in reads"},
-		{"DUPRATE", "1", "Float", "Duplication rate"},
-		{"SVTYPE", "1", "String", "Structural variant type"},
-		{"SVLEN", "1", "Integer", "Structural variant length"},
-		{"SPLITREAD", "1", "Integer", "Number of split reads supporting SV"},
-		{"SPANPAIR", "1", "Integer", "Number of spanning pairs supporting SV"},
-	}
-
-	for _, field := range infoFields {
-		fmt.Fprintf(writer, "##INFO=<ID=%s,Number=%s,Type=%s,Description=\"%s\">\n",
-			field.id, field.number, field.typ, field.description)
-	}
-}
-
-func printFORMATHeaders(writer io.Writer) {
-	formatFields := []struct {
-		id          string
-		number      string
-		typ         string
-		description string
-	}{
-		{"GT", "1", "String", "Genotype"},
-		{"DP", "1", "Integer", "Total Depth"},
-		{"VD", "1", "Integer", "Variant Depth"},
-		{"AD", "R", "Integer", "Allelic depths for the ref and alt alleles"},
-		{"AF", "A", "Float", "Allele Frequency"},
-		{"RD", "1", "Integer", "Reference Depth"},
-		{"ALD", "1", "Integer", "Alternate allele depth"},
-		{"BIAS", "1", "String", "Strand Bias"},
-		{"PMEAN", "1", "Float", "Mean position in reads"},
-		{"PSTD", "1", "Float", "Position STD in reads"},
-		{"QUAL", "1", "Float", "Mean base quality"},
-		{"QSTD", "1", "Float", "Base quality STD"},
-		{"SBF", "1", "String", "Strand Bias Fisher"},
-		{"ODDRATIO", "1", "Float", "Strand Bias Odds Ratio"},
-		{"MQ", "1", "Float", "Mean mapping quality"},
+		{"QUAL", "1", "Float", "Mean quality score in reads"},
+		{"QSTD", "1", "Float", "Quality score STD in reads"},
+		{"SBF", "1", "Float", "Strand Bias Fisher p-value"},
+		{"ODDRATIO", "1", "Float", "Strand Bias Odds ratio"},
+		{"MQ", "1", "Float", "Mean Mapping Quality"},
 		{"SN", "1", "Float", "Signal to noise"},
-		{"HIAF", "1", "Float", "High quality allele frequency"},
-		{"ADJAF", "1", "Float", "Adjusted allele frequency"},
-		{"NM", "1", "Float", "Mean mismatches"},
-		{"DUPRATE", "1", "Float", "Duplication rate"},
+		{"HIAF", "1", "Float", "Allele frequency using only high quality bases"},
+		{"ADJAF", "1", "Float", "Adjusted AF for indels due to local realignment"},
+		{"SHIFT3", "1", "Integer", "No. of bases to be shifted to 3 prime for deletions due to alternative alignment"},
+		{"MSI", "1", "Float", "MicroSatellite. > 1 indicates MSI"},
+		{"MSILEN", "1", "Float", "MicroSatellite unit length in bp"},
+		{"NM", "1", "Float", "Mean mismatches in reads"},
+		{"LSEQ", "1", "String", "5' flanking seq"},
+		{"RSEQ", "1", "String", "3' flanking seq"},
+		{"GDAMP", "1", "Integer", "No. of amplicons supporting variant"},
+		{"TLAMP", "1", "Integer", "Total of amplicons covering variant"},
+		{"NCAMP", "1", "Integer", "No. of amplicons don't work"},
+		{"AMPFLAG", "1", "Integer", "Top variant in amplicons don't match"},
+		{"HICNT", "1", "Integer", "High quality variant reads"},
+		{"HICOV", "1", "Integer", "High quality total reads"},
+		{"SPLITREAD", "1", "Integer", "No. of split reads supporting SV"},
+		{"SPANPAIR", "1", "Integer", "No. of pairs supporting SV"},
+		{"SVTYPE", "1", "String", "SV type: INV DUP DEL INS FUS"},
+		{"SVLEN", "1", "Integer", "The length of SV in bp"},
+		{"DUPRATE", "1", "Float", "Duplication rate in fraction"},
 	}
-
-	for _, field := range formatFields {
-		fmt.Fprintf(writer, "##FORMAT=<ID=%s,Number=%s,Type=%s,Description=\"%s\">\n",
-			field.id, field.number, field.typ, field.description)
+	for _, f := range fields {
+		fmt.Fprintf(writer, "##INFO=<ID=%s,Number=%s,Type=%s,Description=\"%s\">\n",
+			f.id, f.number, f.typ, f.desc)
 	}
 }
 
 func printFILTERHeaders(config Config, writer io.Writer) {
-	filters := []struct {
-		id          string
-		description string
-	}{
-		{"PASS", "Passed all filters"},
-		{fmt.Sprintf("d%d", config.MinTotalDepth), fmt.Sprintf("Total depth < %d", config.MinTotalDepth)},
-		{fmt.Sprintf("v%d", config.MinVariantDepth), fmt.Sprintf("Variant depth < %d", config.MinVariantDepth)},
-		{fmt.Sprintf("f%s", formatFloat(config.MinAF)), fmt.Sprintf("Allele frequency < %s", formatFloat(config.MinAF))},
-		{fmt.Sprintf("p%s", formatFloat(config.MinPMean)), fmt.Sprintf("Mean position < %s", formatFloat(config.MinPMean))},
-		{"pSTD", "Position standard deviation = 0"},
-		{fmt.Sprintf("q%s", formatFloat(config.MinQual)), fmt.Sprintf("Mean base quality < %s", formatFloat(config.MinQual))},
-		{fmt.Sprintf("Q%s", formatFloat(config.MinMapQ)), fmt.Sprintf("Mean mapping quality < %s", formatFloat(config.MinMapQ))},
-		{fmt.Sprintf("SN%s", formatFloat(config.MinSN)), fmt.Sprintf("Signal to noise < %s", formatFloat(config.MinSN))},
-		{"BIAS", "Strand bias detected (p-value < 0.01 and odds ratio >= 2)"},
+	filters := []struct{ id, desc string }{
+		{fmt.Sprintf("q%g", config.MinQual), fmt.Sprintf("Mean Base Quality Below %g", config.MinQual)},
+		{fmt.Sprintf("Q%g", config.MinMapQ), fmt.Sprintf("Mean Mapping Quality Below %g", config.MinMapQ)},
+		{fmt.Sprintf("p%g", config.MinPMean), fmt.Sprintf("Mean Position in Reads Less than %g", config.MinPMean)},
+		{fmt.Sprintf("SN%g", config.MinSN), fmt.Sprintf("Signal to Noise Less than %g", config.MinSN)},
+		{"Bias", "Strand Bias"},
+		{"pSTD", "Position in Reads has STD of 0"},
+		{fmt.Sprintf("d%d", config.MinTotalDepth), fmt.Sprintf("Total Depth < %d", config.MinTotalDepth)},
+		{fmt.Sprintf("v%d", config.MinVarDepth), fmt.Sprintf("Var Depth < %d", config.MinVarDepth)},
+		{fmt.Sprintf("f%g", config.MinAF), fmt.Sprintf("Allele frequency < %g", config.MinAF)},
+		{fmt.Sprintf("MSI%d", config.MaxMSI), fmt.Sprintf("Variant in MSI region with %d non-monomer MSI or 13 monomer MSI", config.MaxMSI)},
+		{fmt.Sprintf("NM%g", config.MaxNM), fmt.Sprintf("Mean mismatches in reads >= %g, thus likely false positive", config.MaxNM)},
+		{"InGap", "The variant is in the deletion gap, thus likely false positive"},
+		{"InIns", "The variant is adjacent to an insertion variant"},
+		{fmt.Sprintf("Cluster%dbp", config.ClusterBP), fmt.Sprintf("Two variants are within %d bp", config.ClusterBP)},
+		{"LongMSI", "The somatic variant is flanked by long A/T (>=14)"},
+		{"AMPBIAS", "Indicate the variant has amplicon bias."},
 	}
+	for _, f := range filters {
+		fmt.Fprintf(writer, "##FILTER=<ID=%s,Description=\"%s\">\n", f.id, f.desc)
+	}
+}
 
-	for _, filter := range filters {
-		fmt.Fprintf(writer, "##FILTER=<ID=%s,Description=\"%s\">\n",
-			filter.id, filter.description)
+func printFORMATHeaders(writer io.Writer) {
+	fields := []struct{ id, number, typ, desc string }{
+		{"GT", "1", "String", "Genotype"},
+		{"DP", "1", "Integer", "Total Depth"},
+		{"VD", "1", "Integer", "Variant Depth"},
+		{"AD", "R", "Integer", "Allelic depths for the ref and alt alleles in the order listed"},
+		{"AF", "A", "Float", "Allele Frequency"},
+		{"RD", "2", "Integer", "Reference forward, reverse reads"},
+		{"ALD", "2", "Integer", "Variant forward, reverse reads"},
+	}
+	for _, f := range fields {
+		fmt.Fprintf(writer, "##FORMAT=<ID=%s,Number=%s,Type=%s,Description=\"%s\">\n",
+			f.id, f.number, f.typ, f.desc)
 	}
 }

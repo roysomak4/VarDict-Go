@@ -1,6 +1,6 @@
 # var2vcf - Go Implementation
 
-A fast, memory-efficient Go implementation of VarDict's `var2vcf_valid.pl` script for converting variant calls to VCF format.
+A Go implementation of VarDict's `var2vcf_valid.pl` (v1.8.2), converting VarDict variant output to VCF format. Drop-in replacement for the Perl script in non-amplicon workflows.
 
 ## Quick Start
 
@@ -8,71 +8,60 @@ A fast, memory-efficient Go implementation of VarDict's `var2vcf_valid.pl` scrip
 # Build
 make build
 
-# Run tests
-make test
-
 # Use in pipeline
-cat input.tsv | ./var2vcf -N sample_name -f 0.01 > output.vcf
-```
-
-## Features
-
-✅ **Zero runtime dependencies** - Static binary, no Perl required  
-✅ **Memory efficient** - Processes chromosomes one at a time  
-✅ **Fast execution** - Go's performance advantages  
-✅ **Compatible** - Drop-in replacement for `var2vcf_valid.pl`  
-✅ **Well-tested** - Comprehensive unit tests  
-
-## Usage
-
-```bash
-# Basic usage
-./var2vcf -N sample_name -f 0.01 < input.tsv > output.vcf
-
-# With full options
-./var2vcf \
-  -N MySample \
-  -G /path/to/genome.fa \
-  -b /path/to/regions.bed \
-  -f 0.01 \
-  -d 8 \
-  -v 4 \
-  -E \
-  < input.tsv > output.vcf
+vardict-java -G genome.fa -N sample -b regions.bed -f 0.01 input.bam \
+  | teststrandbias \
+  | ./var2vcf -N sample -f 0.01 > variants.vcf
 ```
 
 ## Command-Line Options
 
 ```
--N string   Sample name (required)
--G string   Reference genome path
--b string   BED file path for contig information
--d int      Minimum total depth (default: 8)
--v int      Minimum variant depth (default: 4)
--f float    Minimum allele frequency (default: 0.01)
--p float    Minimum mean position in read (default: 5.0)
--q float    Minimum base quality (default: 22.5)
--Q float    Minimum mapping quality (default: 20.0)
--S float    Minimum signal-to-noise ratio (default: 1.5)
--F float    Genotype frequency threshold (default: 0.2)
--E          Print END tag in INFO field
--A          Print all variants at same position
--P          Filter variants with position std dev = 0
--T int      Minimum split reads for SVs (default: 1)
+-N string   Sample name override
+-G string   Path to reference FASTA (written to ##reference header)
+-b string   Path to BED file (written as ##contig headers)
+
+-d int      Minimum total depth (default: 3)
+-v int      Minimum high-quality variant depth (default: 2)
+-f float    Minimum allele frequency (default: 0.02)
+-p float    Minimum mean position in read (default: 8)
+-q float    Minimum mean base quality (default: 22.5)
+-Q float    Minimum mean mapping quality (default: 10)
+-o float    Minimum signal-to-noise ratio (default: 1.5)
+-F float    Genotype frequency threshold for homozygous call (default: 0.2)
+-I int      Maximum non-monomer MSI for AF<0.5 variants (default: 12)
+-m float    Maximum mean mismatches in reads (default: 5.25)
+-c int      Filter SNVs within this many bp of each other, 0=disabled (default: 0)
+-P int      Filter variants with pstd=0: 1=yes, 0=no (default: 1)
+-T int      Minimum split reads for structural variants (default: 1)
+
+-E          Do not print END tag in INFO field
+-A          Output all variants at the same position (default: highest AF only)
+-S          Strict mode: only output variants that pass all filters
 ```
 
-## Complete VarDict Pipeline
+## Filters Applied
 
-```bash
-# Example pipeline
-vardict-java -G genome.fa -N sample -b input.bam -f 0.01 regions.bed \
-  | ./teststrandbias \
-  | ./var2vcf -N sample -f 0.01 > variants.vcf
-```
+| Filter tag | Condition |
+|-----------|-----------|
+| `d<N>` | Total depth < `-d` |
+| `v<N>` | High-quality variant depth < `-v` |
+| `f<N>` | Allele frequency < `-f` |
+| `p<N>` | Mean position in read < `-p` |
+| `pSTD` | Position std dev = 0 (when `-P 1`) |
+| `q<N>` | Mean base quality < `-q` |
+| `Q<N>` | Mean mapping quality < `-Q` and AF < 0.8 |
+| `SN<N>` | Signal-to-noise < `-o` |
+| `NM<N>` | Mean mismatches > `-m` |
+| `MSI<N>` | Variant in microsatellite region |
+| `LongMSI` | Variant flanked by long MSI run |
+| `Bias` | Strand bias (hiaf<0.25, bias=2;1, p<0.01, OR>5 or OR=0, len<100) |
+| `Cluster<N>bp` | Two SNVs within `-c` bp of each other |
 
-## Documentation
+## Limitations
 
-See the full documentation at [https://github.com/yourusername/var2vcf](https://github.com/yourusername/var2vcf)
+- **Amplicon mode** (`-a` flag) is not yet implemented. AMPBIAS filter and amplicon-specific INFO fields (GDAMP/TLAMP/NCAMP/AMPFLAG) are pending.
+- Designed for the standard single-sample (`var2vcf_valid.pl`) workflow, not the paired tumor-normal workflow (`var2vcf_paired.pl`).
 
 ## License
 
